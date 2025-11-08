@@ -30,7 +30,7 @@ queuectl-project/
 ├── setup.py            # Makes `queuectl` an installable package
 ├── requirements.txt    # Python dependencies
 ├── queuectl.py         # The main CLI application
-├── validate.sh         # The end-to-end test script
+├── test.sh         # The end-to-end test script
 └── jobqueue/           # The core application logic (renamed from 'queue')
     ├── __init__.py
     ├── db.py           # Database logic (locking, fetching, updating)
