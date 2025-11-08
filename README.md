@@ -130,7 +130,8 @@ The retry mechanism is also managed by the database state.
 7. If `attempts` exceeds `max_retries`, the state is set to `DEAD`, and it will never be picked up again (unless manually re-queued with `dlq retry`).
 
 
-##This project is designed to be run entirely from within a single, interactive Docker shell.
+## How to Run 
+This project is designed to be run entirely from within a single, interactive Docker shell.
 
 ### Step 1: Build the Image
 
