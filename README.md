@@ -1,53 +1,120 @@
-QueueCTL - Background Job Queuequeuectl is a CLI-based background job queue system built in Python. It uses SQLite for persistent storage and multiprocessing for parallel worker execution.FeaturesPersistent job queue (SQLite)Multiple parallel worker processesAutomatic job retries with exponential backoffDead Letter Queue (DLQ) for permanently failed jobsGraceful worker shutdownCLI-based management for all featuresSetup InstructionsClone the repository:git clone <your-repo-link>
-cd <repository-name>
-Create a virtual environment (recommended):python3 -m venv venv
-source venv/bin/activate
-Install dependencies:pip install -r requirements.txt
-Make the CLI executable:chmod +x queuectl.py
-Initialize the database:The database file queue.db will be created automatically in the directory when you run your first command../queuectl.py status
-Usage ExamplesEnqueue a JobJobs are added as JSON strings. A command is required.# A simple job
-./queuectl.py enqueue '{"id":"job1", "command":"echo Hello World"}'
+QueueCTL - A Python Background Job QueueQueueCTL is a minimal, production-grade, CLI-based background job queue system built in Python.It uses SQLite for persistent, transactional job storage, multiprocessing for parallel worker execution, and is packaged with Docker for easy deployment and testing.FeaturesPersistent Storage: Jobs are stored in a SQLite database (queue.db) and persist across restarts.Parallel Workers: Run multiple worker processes in parallel to process jobs concurrently.* Atomic Operations: Workers use database-level locking (BEGIN IMMEDIATE) to prevent race conditions and ensure a job is only processed once.Automatic Retries: Failed jobs are automatically retried with exponential backoff (delay = base ^ attempts).Dead Letter Queue (DLQ): Jobs that exhaust their max_retries are moved to the DLQ for manual inspection.Clean CLI: All operations are managed through a typer-based CLI.Dockerized: Comes with a docker-compose.yml for a production-like and testable environment.Project Structure```queuectl-project/├── docker-compose.yml  # Defines all services (worker, cli, shell)├── Dockerfile          # Recipe to build the container├── pyproject.toml      # Build system configuration├── setup.py            # Makes queuectl an installable package├── requirements.txt    # Python dependencies├── queuectl.py         # The main CLI application├── validate.sh         # The end-to-end test script└── jobqueue/           # The core application logic (renamed from 'queue')├── init.py├── db.py           # Database logic (locking, fetching, updating)├── models.py       # Job and JobState data models└── worker.py       # Worker class and job execution logic
+## How to Run (Docker)
 
-# A job that will fail
-./queuectl.py enqueue '{"command":"ls /nonexistent-directory"}'
+This is the recommended way to run and test the application.
 
-# A job with custom retries
-./queuectl.py enqueue '{"command":"exit 1", "max_retries": 5}'
-Manage WorkersWorkers run as background processes.# Start 3 workers
-./queuectl.py worker start --count 3
+### Prerequisites
 
-# Stop all running workers gracefully
-# Workers will finish their current job before exiting.
-./queuectl.py worker stop
-Check StatusGet a summary of all job states and active workers../queuectl.py status
-Example Output:┏━━━━━━━━━━━━━ QueueCTL Status ━━━━━━━━━━━━━┓
-┃ State     │ Count                         ┃
-┠───────────┼───────────────────────────────┨
-┃ pending   │ 0                             ┃
-┃ processing│ 0                             ┃
-┃ completed │ 2                             ┃
-┃ failed    │ 0                             ┃
-┃ dead      │ 1                             ┃
-┗━━━━━━━━━━━┷━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-Active Workers: 0 []
-List JobsList jobs by their current state.# List all pending jobs (default)
-./queuectl.py list
-./queuectl.py list --state pending
+  * Docker
 
-# List all completed jobs
-./queuectl.py list --state completed
-Manage Dead Letter Queue (DLQ)View or retry permanently failed jobs.# List all permanently failed jobs
-./queuectl.py dlq list
+  * Docker Compose
 
-# Retry a specific job from the DLQ
-./queuectl.py dlq retry <job-id>
-ConfigurationManage internal settings, which are stored in the database.# Set the default max retries for new jobs
-./queuectl.py config set max_retries 3
+### Step 1: Build the Image
 
-# Set the base for exponential backoff (delay = base ^ attempts)
-./queuectl.py config set backoff_base 2
+First, build the Docker image. This will install all dependencies and use `setup.py` to install `queuectl` as a command inside the container.
 
-# View all configs
-./queuectl.py config list
-Architecture OverviewPersistence: SQLite is used as the data store (queue.db). It provides transactional, persistent, and process-safe storage for jobs, configuration, and worker process IDs.Concurrency:Workers: Implemented as separate OS processes using Python's multiprocessing module.Job Locking: To prevent duplicate job execution, the fetch_pending_job() function uses a BEGIN IMMEDIATE transaction in SQLite. This acquires an immediate database lock, ensuring that finding a pending job and marking it as 'processing' is a single atomic operation.Job Lifecycle:pending: A job is added via enqueue.processing: A worker atomically fetches the job.completed: The job's command exits with code 0.failed: The command exits with a non-zero code or times out.(Retry): If attempts < max_retries, the job state is set to failed and run_at is set to a future time based on exponential backoff (delay = base ^ attempts). It will be picked up again after this delay.dead: If attempts >= max_retries, the job is moved to the DLQ.Graceful Shutdown: Workers listen for SIGTERM (sent by worker stop). A running flag is set to False, and the worker exits its main loop after its current job is complete.Assumptions & Trade-offsshell=True: Job commands are executed with subprocess.run(..., shell=True). This is required to interpret commands like echo 'Hello' but can be a security risk if untrusted input can be enqueued. A production system might tokenize commands or run them in a sandboxed environment.SQLite Concurrency: SQLite locks the entire database file on writes. This is perfectly acceptable for this assignment's scale, but a high-throughput system would require a database server like PostgreSQL or Redis that supports row-level locking.Worker Management: Worker PIDs are stored in the DB. If a worker is hard-killed (kill -9), its PID may be left in the workers table, requiring manual cleanup. A more robust system would use a heartbeat mechanism.Testing InstructionsA validation script is provided to test all core functionality.Ensure you have followed the Setup Instructions.Run the script:./validate.sh
-This script will:Clean the database.Set configuration.Enqueue successful, failing, and long-running jobs.Start workers and wait for jobs to be processed.Verify that jobs have moved to the correct final states (completed or dead).Test the dlq retry command.Stop all workers.
+```
+docker-compose build
+
+```
+
+### Step 2: Run the System (Two-Terminal Workflow)
+
+You need two terminals: one for the (background) worker service and one to send (client) commands.
+
+**In Terminal 1: Start the Workers**
+
+This command starts the `worker` service in the background. It will automatically run 2 workers (as defined in `docker-compose.yml`) and continuously watch the database for new jobs.
+
+
+docker-compose up -d worker
+**In Terminal 2: Send Commands**
+
+Use `docker-compose run --rm queuectl` to run any `queuectl` command. This creates a new, temporary container that connects to the same database.
+
+
+Check the status of the queuedocker-compose run --rm queuectl statusEnqueue a new jobdocker-compose run --rm queuectl enqueue '{"command":"echo Hello from Docker"}'List all pending jobsdocker-compose run --rm queuectl list --state pending
+### Step 3: View Worker Logs
+
+To see the output from your running workers in Terminal 1, run:
+
+
+docker-compose logs -f worker
+You will see jobs being picked up, processed, and completed here in real-time.
+
+### Step 4: Stop Everything
+
+When you are finished, this command will stop and remove the worker container and network.
+
+
+docker-compose down
+*(Your data is safe, as it's stored in the `queue_data` Docker volume).*
+
+## How to Test
+
+This project includes a detailed end-to-end test script, `validate.sh`. The easiest way to run it is by using the `shell` service defined in `docker-compose.yml`.
+
+### Step 1: Start the Interactive Shell
+
+This command will start a new container and drop you into a `/bin/bash` prompt *inside* that container.
+
+
+docker-compose run --rm shell
+### Step 2: Run the Testing Script
+
+Your terminal prompt will change (e.g., `root@...:/app#`). You are now inside the container, and `queuectl` is an available command.
+
+Run the test script:
+
+
+./validate.sh
+This script will automatically:
+
+1.  Clean the database.
+
+2.  Set config values (`max_retries=2`).
+
+3.  Enqueue successful, failing, and long-running jobs.
+
+4.  Start 2 workers in the background.
+
+5.  Wait and verify that jobs correctly move to `completed` or `dead`.
+
+6.  Test the `dlq retry` functionality.
+
+7.  Run a **race condition test** (1 job, 5 workers) to ensure the job is processed exactly once.
+
+8.  Clean up all processes.
+
+### Step 3: Exit the Shell
+
+When the script is finished, just type `exit` to return to your normal terminal.
+
+
+exit
+## CLI Command Reference
+
+Once inside the `shell`, you can get help for any command.
+
+
+Get all top-level commandsqueuectl --helpGet help for a subcommand (e.g., worker)queuectl worker --help
+  * **`queuectl enqueue '{"cmd":...}'`**: Adds a new job.
+
+  * **`queuectl status`**: Shows a summary of job states and active workers.
+
+  * **`queuectl list --state <state>`**: Lists all jobs in a specific state.
+
+  * **`queuectl worker start --count <n>`**: Starts worker processes.
+
+  * **`queuectl worker stop`**: Stops all registered workers.
+
+  * **`queuectl dlq list`**: Lists all jobs in the Dead Letter Queue.
+
+  * **`queuectl dlq retry <job-id>`**: Re-queues a dead job.
+
+  * **`queuectl config set <key> <value>`**: Sets a config value (e.g., `max_retries`).
+
+  * **`queuectl config get <key>`**: Retrieves a config value.
+
+
+
