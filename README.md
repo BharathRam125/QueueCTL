@@ -39,6 +39,93 @@ queuectl-project/
 
 ```
 
+## Design, Architecture, and Logic
+
+This system is built on a "producer-consumer" model where the central SQLite database *is* the queue.
+
+* **Producers (`queuectl` CLI):** Act as clients that add jobs to the database (the queue).
+
+* **Consumers (`jobqueue/worker.py`):** Are separate processes that poll the database, lock and fetch jobs, and execute them.
+
+### Core Components
+
+1. **`queuectl` (CLI):** The user's entry point. It's a client whose only job is to add rows to the `jobs` table (e.g., `queuectl enqueue`) or read data (e.g., `queuectl status`).
+
+2. **`jobqueue/db.py` (Database Layer):** It handles all state management and, most critically, manages concurrency. The database itself acts as the message broker.
+
+3. **`jobqueue/worker.py` (Workers):** These are the "consumers." A worker runs in a continuous loop, constantly asking the database for a new job. When it gets one, it executes the command using `subprocess.run()`.
+
+### The Job Lifecycle
+
+The state of a job (defined in `jobqueue/models.py`) is the key to the entire system.
+
+```
+[ Enqueue ] -> (PENDING)
+                 |
+         (Worker Fetches Job)
+                 |
+           v
+        (PROCESSING)
+                 |
+       +---------+---------+
+       |                   |
+ (Job command fails)  (Job command succeeds)
+ (Exit Code != 0)      (Exit Code == 0)
+       |                   |
+       v                   v
+    (FAILED)           (COMPLETED)
+       |
++------+----------------+
+|                       |
+(Attempts >= Max)  (Attempts < Max)
+|                       |
+v                       v
+(DEAD)            (State set to FAILED)
+[In DLQ]          (Calculates 'run_at')
+                    (Worker polls again
+                    after 'run_at' time)
+
+```
+
+### Concurrency & The "Atomic Fetch"
+
+This is the most critical piece of the design, solving the "race condition" problem.
+
+**Problem:** How do you prevent two workers (Worker A and Worker B), both polling for jobs at the same time, from grabbing the *same* `PENDING` job?
+
+**Solution:** An atomic fetch-and-lock mechanism in `jobqueue/db.py`'s `fetch_pending_job()` function.
+
+The operation is atomic, meaning it *cannot* be interrupted. Here is the logic:
+
+1. **`BEGIN IMMEDIATE`:** The worker requests an `IMMEDIATE` transaction from SQLite. This instantly acquires an **exclusive write-lock** on the database file. No other worker can write to the database (or begin their own `IMMEDIATE` transaction) until this one is finished.
+
+2. **`SELECT...`:** The worker (now holding the lock) safely finds the next available job. This query is smart: it looks for `state = 'pending'` OR `(state = 'failed' AND run_at <= now())`.
+
+3. **`UPDATE...`:** The worker *immediately* updates that job's state to `processing` and gets its details.
+
+4. **`COMMIT`:** The transaction is committed, and the lock on the database is released.
+
+**Result:** The entire "find a job and mark it as mine" operation happens in one uninterruptible step. By the time Worker B gets its lock, Worker A has already marked the job as `processing`, so Worker B won't see it. This guarantees that a job is only ever processed by **one worker at a time**.
+
+### Retry & Exponential Backoff Logic
+
+The retry mechanism is also managed by the database state.
+
+1. When a worker executes a job and gets a non-zero exit code, it calls `db.update_job_failure()`.
+
+2. This function increments the `attempts` counter.
+
+3. It calculates the backoff: `delay = backoff_base ** attempts`.
+
+4. It sets the job's `run_at` timestamp to `now + delay`.
+
+5. It sets the job's state to `FAILED`.
+
+6. The job is now "sleeping." It is ignored by workers until the `run_at` timestamp is in the past, at which point the `fetch_pending_job()` query will see it again as eligible for a retry.
+
+7. If `attempts` exceeds `max_retries`, the state is set to `DEAD`, and it will never be picked up again (unless manually re-queued with `dlq retry`).
+
+
 ## How to Run (Docker)
 
 This is the recommended way to run and test the application.
