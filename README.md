@@ -191,7 +191,7 @@ queuectl worker --help
 
 * **`queuectl config get <key>`**: Retrieves a config value.
 
-Test script logs
+## Test script logs
 ```
 root@e44a726247d9:/app# ./test.sh
 --- QueueCTL Test Script (Detailed) ---
