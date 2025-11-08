@@ -190,3 +190,276 @@ queuectl worker --help
 * **`queuectl config set <key> <value>`**: Sets a config value (e.g., `max_retries`).
 
 * **`queuectl config get <key>`**: Retrieves a config value.
+
+Test script logs
+```
+root@e44a726247d9:/app# ./test.sh
+--- QueueCTL Test Script (Detailed) ---
+This script will test all core functionality, including retries and the DLQ.
+
+--- [STEP 0] CLEANUP ---
+Cleaning up old database at /data/queue.db...
+Cleanup complete.
+
+--- [STEP 1] SET CONFIGURATION ---
+Running: queuectl config set max_retries 2
+Config updated: max_retries = 2
+Running: queuectl config set backoff_base 2
+Config updated: backoff_base = 2
+Running: queuectl config list
+  System Configuration  
+┏━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Key          ┃ Value ┃
+┡━━━━━━━━━━━━━━╇━━━━━━━┩
+│ max_retries  │ 2     │
+│ backoff_base │ 2     │
+└──────────────┴───────┘
+Configuration set.
+
+--- [STEP 2] ENQUEUE JOBS ---
+Running: queuectl enqueue '{"id":"job-success", "command":"echo Job 1: Success"}'
+Job job-success enqueued: echo Job 1: Success
+Running: queuectl enqueue '{"id":"job-fail", "command":"exit 1"}'
+Job job-fail enqueued: exit 1
+Running: queuectl enqueue '{"id":"job-long", "command":"sleep 3 && echo Job 3: Long job complete"}'
+Job job-long enqueued: sleep 3 && echo Job 3: Long job complete
+Running: queuectl enqueue '{"id":"job-invalid", "command":"not_a_real_command"}'
+Job job-invalid enqueued: not_a_real_command
+All jobs enqueued.
+
+--- [STEP 3] CHECK INITIAL STATUS ---
+Running: queuectl status (Should show 4 pending jobs)
+   QueueCTL Status    
+┏━━━━━━━━━━━━┳━━━━━━━┓
+┃ State      ┃ Count ┃
+┡━━━━━━━━━━━━╇━━━━━━━┩
+│ Pending    │     4 │
+│ Processing │     0 │
+│ Completed  │     0 │
+│ Failed     │     0 │
+│ Dead       │     0 │
+└────────────┴───────┘
+Active Workers: 0 []
+Running: queuectl list --state pending
+                                         Pending Jobs                                         
+┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Job ID      ┃ Command                              ┃ Attempts ┃ Updated At                 ┃
+┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ job-success │ echo Job 1: Success                  │ 0        │ 2025-11-08T13:29:13.868428 │
+│ job-fail    │ exit 1                               │ 0        │ 2025-11-08T13:29:13.994026 │
+│ job-long    │ sleep 3 && echo Job 3: Long job      │ 0        │ 2025-11-08T13:29:14.120811 │
+│             │ complete                             │          │                            │
+│ job-invalid │ not_a_real_command                   │ 0        │ 2025-11-08T13:29:14.236377 │
+└─────────────┴──────────────────────────────────────┴──────────┴────────────────────────────┘
+Initial status checked.
+
+--- [STEP 4] START WORKERS ---
+Running: queuectl worker start --count 2 --foreground &
+Worker manager process started with PID: 18
+[Manager] Starting 2 worker(s) in foreground mode...
+[Manager] Started worker PID: 20
+[Manager] Started worker PID: 21
+[Worker 20] Started and registered.
+[Worker 20] Processing job job-success: echo Job 1: Success
+[Worker 20] Job job-success completed successfully.
+[Worker 20] Processing job job-fail: exit 1
+[Worker 20] Job job-fail failed (exit code 1).
+[Worker 20] Processing job job-long: sleep 3 && echo Job 3: Long job complete
+[Worker 21] Started and registered.
+[Worker 21] Processing job job-invalid: not_a_real_command
+[Worker 21] Job job-invalid failed (exit code 127).
+Workers started.
+
+--- [STEP 5] WAITING FOR JOBS TO PROCESS ---
+Waiting 10 seconds for jobs to complete, fail, and retry...
+(Job 1/3 should complete. Job 2/4 should fail, retry, and move to DLQ).
+[Worker 21] Processing job job-fail: exit 1
+[Worker 21] Job job-fail failed (exit code 1).
+[Worker 21] Processing job job-invalid: not_a_real_command
+[Worker 21] Job job-invalid failed (exit code 127).
+[Worker 20] Job job-long completed successfully.
+Wait complete.
+
+--- [STEP 6] CHECK FINAL STATUS & VERIFY ---
+Running: queuectl status (Should show 2 completed, 2 dead)
+   QueueCTL Status    
+┏━━━━━━━━━━━━┳━━━━━━━┓
+┃ State      ┃ Count ┃
+┡━━━━━━━━━━━━╇━━━━━━━┩
+│ Pending    │     0 │
+│ Processing │     0 │
+│ Completed  │     2 │
+│ Failed     │     0 │
+│ Dead       │     2 │
+└────────────┴───────┘
+Active Workers: 2 [20, 21]
+Verifying 'completed' jobs...
+Running: queuectl list --state completed
+                                          Completed Jobs                                          
+┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Job ID      ┃ Command                                  ┃ Attempts ┃ Updated At                 ┃
+┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ job-success │ echo Job 1: Success                      │ 0        │ 2025-11-08T13:29:14.626789 │
+│ job-long    │ sleep 3 && echo Job 3: Long job complete │ 0        │ 2025-11-08T13:29:17.654873 │
+└─────────────┴──────────────────────────────────────────┴──────────┴────────────────────────────┘
+Verified: 'job-success' and 'job-long' are COMPLETED.
+Verifying 'dead' (DLQ) jobs...
+Running: queuectl dlq list
+                                 Dead Jobs                                  
+┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Job ID      ┃ Command            ┃ Attempts ┃ Updated At                 ┃
+┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ job-fail    │ exit 1             │ 2        │ 2025-11-08T13:29:16.693984 │
+│ job-invalid │ not_a_real_command │ 2        │ 2025-11-08T13:29:16.707192 │
+└─────────────┴────────────────────┴──────────┴────────────────────────────┘
+Verified: 'job-fail' and 'job-invalid' are DEAD.
+Verification complete.
+
+--- [STEP 7] TEST DLQ RETRY ---
+Running: queuectl dlq retry job-fail
+Job job-fail moved from DLQ to 'pending'.
+Running: queuectl status (Should show 1 pending)
+   QueueCTL Status    
+┏━━━━━━━━━━━━┳━━━━━━━┓
+┃ State      ┃ Count ┃
+┡━━━━━━━━━━━━╇━━━━━━━┩
+│ Pending    │     1 │
+│ Processing │     0 │
+│ Completed  │     2 │
+│ Failed     │     0 │
+│ Dead       │     1 │
+└────────────┴───────┘
+Active Workers: 2 [20, 21]
+Running: queuectl list --state pending (Should show 'job-fail')
+                         Pending Jobs                         
+┏━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Job ID   ┃ Command ┃ Attempts ┃ Updated At                 ┃
+┡━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ job-fail │ exit 1  │ 0        │ 2025-11-08T13:29:26.981786 │
+└──────────┴─────────┴──────────┴────────────────────────────┘
+Verified: 'job-fail' is PENDING.
+
+--- [STEP 8] WAITING FOR DLQ JOB TO FAIL ---
+Waiting 5 seconds for 'job-fail' to be processed and fail again...
+[Worker 20] Processing job job-fail: exit 1
+[Worker 20] Job job-fail failed (exit code 1).
+[Worker 20] Processing job job-fail: exit 1
+[Worker 20] Job job-fail failed (exit code 1).
+Running: queuectl dlq list (Should show 'job-fail' back in DLQ)
+                                 Dead Jobs                                  
+┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Job ID      ┃ Command            ┃ Attempts ┃ Updated At                 ┃
+┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ job-fail    │ exit 1             │ 2        │ 2025-11-08T13:29:29.761998 │
+│ job-invalid │ not_a_real_command │ 2        │ 2025-11-08T13:29:16.707192 │
+└─────────────┴────────────────────┴──────────┴────────────────────────────┘
+Verified: 'job-fail' is DEAD again.
+
+--- [STEP 9] STOP WORKERS ---
+Stopping worker manager (PID 18)...
+[Manager] Shutdown signal received. Terminating 2 workers...
+[Worker 20] Shutdown signal received. Exiting...
+[Worker 21] Shutdown signal received. Exiting...
+[Worker 20] Stopped and unregistered.
+[Worker 21] Stopped and unregistered.
+[Manager] All workers shut down. Exiting.
+Workers stopped.
+
+--- [STEP 10] FINAL STATUS CHECK ---
+Running: queuectl status (Should show 0 active workers)
+   QueueCTL Status    
+┏━━━━━━━━━━━━┳━━━━━━━┓
+┃ State      ┃ Count ┃
+┡━━━━━━━━━━━━╇━━━━━━━┩
+│ Pending    │     0 │
+│ Processing │     0 │
+│ Completed  │     2 │
+│ Failed     │     0 │
+│ Dead       │     2 │
+└────────────┴───────┘
+Active Workers: 0 []
+
+--- [STEP 11] TEST FOR RACE CONDITIONS ---
+This test will start 5 workers to try and grab 1 job at the same time.
+Cleaning up old database at /data/queue.db...
+Running: queuectl status (Should show 0 jobs)
+   QueueCTL Status    
+┏━━━━━━━━━━━━┳━━━━━━━┓
+┃ State      ┃ Count ┃
+┡━━━━━━━━━━━━╇━━━━━━━┩
+│ Pending    │     0 │
+│ Processing │     0 │
+│ Completed  │     0 │
+│ Failed     │     0 │
+│ Dead       │     0 │
+└────────────┴───────┘
+Active Workers: 0 []
+Running: queuectl enqueue '{"id":"job-race-test", "command":"sleep 2 && echo Race test job complete"}'
+Job job-race-test enqueued: sleep 2 && echo Race test job complete
+Running: queuectl list --state pending (Should show 1 job)
+                                           Pending Jobs                                           
+┏━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Job ID        ┃ Command                                ┃ Attempts ┃ Updated At                 ┃
+┡━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ job-race-test │ sleep 2 && echo Race test job complete │ 0        │ 2025-11-08T13:29:34.798915 │
+└───────────────┴────────────────────────────────────────┴──────────┴────────────────────────────┘
+Running: queuectl worker start --count 5 --foreground &
+Worker manager (Race Test) started with PID: 58
+[Manager] Starting 5 worker(s) in foreground mode...
+[Manager] Started worker PID: 60
+[Manager] Started worker PID: 61
+[Manager] Started worker PID: 62
+[Manager] Started worker PID: 63
+[Manager] Started worker PID: 64
+[Worker 60] Started and registered.
+[Worker 60] Processing job job-race-test: sleep 2 && echo Race test job complete
+[Worker 61] Started and registered.
+[Worker 62] Started and registered.
+[Worker 63] Started and registered.
+[Worker 64] Started and registered.
+Waiting 5 seconds for the single job to be processed...
+[Worker 60] Job job-race-test completed successfully.
+Verifying results (Expect 1 completed job, 0 pending/failed/dead)
+Running: queuectl status
+   QueueCTL Status    
+┏━━━━━━━━━━━━┳━━━━━━━┓
+┃ State      ┃ Count ┃
+┡━━━━━━━━━━━━╇━━━━━━━┩
+│ Pending    │     0 │
+│ Processing │     0 │
+│ Completed  │     1 │
+│ Failed     │     0 │
+│ Dead       │     0 │
+└────────────┴───────┘
+Active Workers: 5 [60, 61, 62, 63, 64]
+Checking 'completed' list...
+                                          Completed Jobs                                          
+┏━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Job ID        ┃ Command                                ┃ Attempts ┃ Updated At                 ┃
+┡━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ job-race-test │ sleep 2 && echo Race test job complete │ 0        │ 2025-11-08T13:29:37.065122 │
+└───────────────┴────────────────────────────────────────┴──────────┴────────────────────────────┘
+Verified: 'job-race-test' is COMPLETED.
+Checking 'pending' list...
+Verified: 'job-race-test' is not PENDING.
+Checking 'dead' list...
+Verified: 'job-race-test' is not DEAD.
+Verified: Job was processed exactly once by 5 workers.
+Stopping worker manager (PID 58)...
+[Manager] Shutdown signal received. Terminating 5 workers...
+[Worker 61] Shutdown signal received. Exiting...
+[Worker 63] Shutdown signal received. Exiting...
+[Worker 60] Shutdown signal received. Exiting...
+[Worker 62] Shutdown signal received. Exiting...
+[Worker 64] Shutdown signal received. Exiting...
+[Worker 60] Stopped and unregistered.
+[Worker 63] Stopped and unregistered.
+[Worker 61] Stopped and unregistered.
+[Worker 64] Stopped and unregistered.
+[Worker 62] Stopped and unregistered.
+[Manager] All workers shut down. Exiting.
+Race condition test complete.
+
+--- Test Complete ---
+
+```
