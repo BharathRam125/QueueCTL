@@ -20,6 +20,10 @@ It uses **SQLite** for persistent, transactional job storage, **multiprocessing*
 
 * **Dockerized:** Comes with a `docker-compose.yml` for a production-like and testable environment.
 
+## Demo Video
+
+[**https://drive.google.com/file/d/1FjFjJWnqG_BBvz0pDBPjLuiZI1IDtWIF/view**](https://drive.google.com/file/d/1FjFjJWnqG_BBvz0pDBPjLuiZI1IDtWIF/view)
+
 ## Project Structure
 
 ```
