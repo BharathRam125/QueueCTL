@@ -130,98 +130,80 @@ The retry mechanism is also managed by the database state.
 7. If `attempts` exceeds `max_retries`, the state is set to `DEAD`, and it will never be picked up again (unless manually re-queued with `dlq retry`).
 
 
-## How to Run (Docker)
-
-This is the recommended way to run and test the application.
-
-### Prerequisites
-
-* Docker
-
-* Docker Compose
+##This project is designed to be run entirely from within a single, interactive Docker shell.
 
 ### Step 1: Build the Image
 
 First, build the Docker image. This will install all dependencies and use `setup.py` to install `queuectl` as a command inside the container.
 
-```
+```bash
 docker-compose build
-
 ```
 
-### Step 2: Run the System (Two-Terminal Workflow)
+### Step 2: Start the Interactive Shell
 
-You need two terminals: one for the (background) worker service and one to send (client) commands.
+This is the main command. It will start a new container, drop you into a `/bin/bash` prompt, and keep you there.
 
-**In Terminal 1: Start the Workers**
-
-This command starts the `worker` service in the background. It will automatically run 2 workers (as defined in `docker-compose.yml`) and continuously watch the database for new jobs.
-
-```
-docker-compose up -d worker
-
+```bash
+docker-compose run --rm shell
 ```
 
-**In Terminal 2: Send Commands**
+### Step 3: Use the Application (Inside the Shell)
 
-Use `docker-compose run --rm queuectl` to run any `queuectl` command. This creates a new, temporary container that connects to the same database.
+You are now inside the container (your prompt is `root@...:/app#`). All commands are run from here.
 
+**A) Start Your Workers**
+
+First, start your workers in the background. The `&` is important.
+
+```bash
+# Start 2 workers in the background
+queuectl worker start --count 2 --foreground &
 ```
-# Check the status of the queue
-docker-compose run --rm queuectl status
+
+**B) Manage Your Queue**
+
+Now, you can enqueue jobs and check the status. The workers you just started will process them.
+
+```bash
+# Check the status (you should see 2 active workers)
+queuectl status
 
 # Enqueue a new job
-docker-compose run --rm queuectl enqueue '{"command":"echo Hello from Docker"}'
+queuectl enqueue '{"command":"echo Hello from my queue"}'
 
-# List all pending jobs
-docker-compose run --rm queuectl list --state pending
+# Wait a second and check the status again
+sleep 2
+queuectl status
 
+# List completed jobs
+queuectl list --state completed
 ```
 
-### Step 3: View Worker Logs
+**C) Stop Your Workers**
 
-To see the output from your running workers in Terminal 1, run:
+To stop the background workers you started, run:
 
-```
-docker-compose logs -f worker
-
-```
-
-You will see jobs being picked up, processed, and completed here in real-time.
-
-### Step 4: Stop Everything
-
-When you are finished, this command will stop and remove the worker container and network.
-
-```
-docker-compose down
-
+```bash
+# This will find and stop all registered workers
+queuectl worker stop
 ```
 
-*(Your data is safe, as it's stored in the `queue_data` Docker volume).*
+### Step 4: Run the Full Test Script
 
-## How to Test
+The easiest way to test everything is to run the built-in test script. You can run this from inside the interactive shell.
 
-This project includes a detailed end-to-end test script, `validate.sh`. The easiest way to run it is by using the `shell` service defined in `docker-compose.yml`.
-
-### Step 1: Start the Interactive Shell
-
-This command will start a new container and drop you into a `/bin/bash` prompt *inside* that container.
-
-```
-docker-compose run --rm shell
-
-```
-
-### Step 2: Run the Testing Script
-
-Your terminal prompt will change (e.g., `root@...:/app#`). You are now inside the container, and `queuectl` is an available command.
-
-Run the test script:
-
-```
+```bash
+# This will clean the DB, start workers, run all tests, and stop the workers.
 ./test.sh
+```
 
+### Step 5: Exit
+
+When you are finished, just exit the shell. This will stop the container.
+
+```bash
+exit
 ```
 
 This script will automatically:
