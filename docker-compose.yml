@@ -1,0 +1,30 @@
+services:
+  # This is the worker service.
+  # It just builds and runs. It uses the default
+  # command from the Dockerfile: `queuectl worker start --foreground`
+  worker:
+    build: .
+    container_name: queuectl-worker
+    volumes:
+      - queue_data:/data
+
+  # This service is for sending one-off commands
+  queuectl:
+    build: .
+    volumes:
+      - queue_data:/data
+    # This OVERRIDES the entrypoint to run queuectl
+    entrypoint: ["queuectl"]
+
+  # This service is for getting an interactive shell
+  shell:
+    build: .
+    volumes:
+      - queue_data:/data
+    # This OVERRIDES the entrypoint to run bash
+    entrypoint: ["/bin/bash"]
+    stdin_open: true # Keeps the terminal open
+    tty: true        # Gives you a terminal prompt
+
+volumes:
+  queue_data:
