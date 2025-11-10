@@ -35,7 +35,7 @@ queuectl-project/
 ├── requirements.txt    # Python dependencies
 ├── queuectl.py         # The main CLI application
 ├── test.sh         # The end-to-end test script
-└── jobqueue/           # The core application logic (renamed from 'queue')
+└── jobqueue/           # The core application logic 
     ├── __init__.py
     ├── db.py           # Database logic (locking, fetching, updating)
     ├── models.py       # Job and JobState data models
